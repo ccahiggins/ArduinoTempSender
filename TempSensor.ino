@@ -6,319 +6,277 @@
 #include <SPI.h>
 #include <avr/power.h>
 
-//String messageSize="................";
-
 //Device specific stuff
-int device = 3;
-const uint16_t this_node = 03;
-
-//Temp sensor address
-//DeviceAddress Probe01 = {
-//  0x28, 0xFD, 0xD2, 0xBE, 0x06, 0x00, 0x00, 0xAE
-//};
-
+int device = 1;
+const uint16_t this_node = 01;
 //End device specific stuff
+
+//Temp Sensor Probe
 DeviceAddress Probe01;
 
 bool diagnosticMode = false;
 
-int led1 = 6;
-int led2 = 7;
+//Interval in 8s to check temp
+int intervalCounter = 40;
+//Counter, increments every 8 seconds
+int counter = 20;
+//Number of times for temp to remain the same
+int tempInterval = 5;
+//Increment every time temp is same as last
+int tempCounter = 1;
 
-//int battery = A0;
-int radioPin = 5;
-int tempPin = 8;
+//Last temp recorded
+float lastTemp = 0;
+bool tempChange = true;
 
-int buttonPin = 4;
+//Led pins
+int led1 = 19;
+int led2 = 18;
 
-int intervalCounter=40;
+//Radio pin
+int radioPin = 8;
 
-// Data wire is plugged into pin 2 on the Arduino
+//Temp sensor pin
+int tempPin = 4;
 
-#define ONE_WIRE_BUS 2
+//Button pin
+int buttonPin = 16;
+
+// Data wire pin 3
+#define ONE_WIRE_BUS 3
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
 
-
-RF24 radio(9, 10);
-
+//Setup radio
+RF24 radio(10, 9);
 RF24Network network(radio);
 
 //Node to send data to
 const uint16_t other_node = 00;
 
+//Payload to send to Pi with temp data
 struct payload_t {
   float temp;
   int voltage;
   int deviceNum;
 };
 
+//Payload for debugging
 struct payload_debug {
   int deviceNum;
   int message;
 };
 
-int counter = 1;
-int tempCounter = 1;
-
-float lastTemp = 0;
-
-bool tempChange = true;
-
-void setup(void)
-{
-  turnOffLed(led1);
-  delay(50);
-  turnOnLed(led1);
-  delay(1000);
+void setup(void) {
   //LowPower.powerDown(SLEEP_4S, ADC_OFF, BOD_OFF);
-     //Set clock to 4MHz on 8MHz Pro Mini
-  diagnosticMode = startupModeCheck();
-  if (diagnosticMode) {intervalCounter = 4;}
-   
-  sensors.begin();
-  sensors.setResolution(12);
-  sensors.setWaitForConversion(false);  //Don't use delay() to wait for conversion
-                                        //So power can shut down instead
-  SPI.begin();
+  //Set clock to 4MHz on 8MHz Pro Mini
 
+  //Set pin modes
+  pinMode(led1, OUTPUT);
+  pinMode(led2, OUTPUT);
+  pinMode(buttonPin, INPUT_PULLUP);
   pinMode(radioPin, OUTPUT);
   pinMode(tempPin, OUTPUT);
   digitalWrite(tempPin, HIGH);
-  delay(5000);
-  if (!sensors.getAddress(Probe01, 0))   //Check temp sesnor address available
-  {
-    turnOnLed(led1);
-    flashLed(led2, 200, 5, 50);
-    turnOffLed(led1);
-    delay(500);
-  }
-  else
-  {
-    turnOnLed(led1);
-    flashLed(led2, 100, 2, 50);
-    turnOffLed(led1);
-    delay(500);
-  }
-
-  digitalWrite(tempPin, LOW);
   digitalWrite(radioPin, HIGH);
+
+  //Check if using diagnostic mode
+  startupModeCheck();
+
+  //Setup temp sensor bits
+  sensors.begin();
+  sensors.setResolution(12);
+  sensors.setWaitForConversion(false);  //Don't use delay() to wait for conversion so power can shut down instead
+  SPI.begin();
+
+  flashLed(led1, 5, 10, 5);
+  tempTest();
+  flashLed(led1, 5, 10, 5);
+
+  //Setup radio bits
   radio.begin();
+  radio.setChannel(90);
   radio.setDataRate(RF24_250KBPS);
-  if (diagnosticMode)
-  {
-    radio.printDetails();
-  }
-  network.begin(/*channel*/ 90, /*node address*/ this_node);
+  radio.setAutoAck(true);
+  network.begin(this_node);
   network.update();
+
   testRadio();
-  radio.powerDown();
-  
+  flashLed(led1, 5, 10, 5);
+
+  delay(200);
+  digitalWrite(tempPin, LOW);
   digitalWrite(radioPin, LOW);
-  //clock_prescale_set(clock_div_2);
 }
 
 
-void testRadio()
-{
-  payload_t payload = {
-      99, 99, 99
-  };
-  RF24NetworkHeader header(/*to node*/ other_node);
-  bool ok = network.write(header, &payload, sizeof(payload));
+void tempTest() {
+  flashLed(led1, 100, 1);
+  //Check temp sesnor address available
+  if (!sensors.getAddress(Probe01, 0)) {
+    flashLed(led2, 300, 2, 50);
+    turnOffLed(led1);
+    delay(500);
+  } else {
+    flashLed(led2, 100, 1, 50);
+    turnOffLed(led1);
+    delay(500);
+  }
+}
 
-  if (!ok)
- {
-    turnOnLed(led1);
-    flashLed(led2, 200, 5, 50);
-    turnOffLed(led1);
-    delay(500);
+void testRadio() {
+  flashLed(led1, 100, 2);
+//  payload_debug payload = {
+//    123, device
+//  };
+  payload_t payload = {
+    66, 66, 66
+  };
+
+  RF24NetworkHeader header(other_node, 'd');
+
+  bool ok = network.write(header, &payload, sizeof(payload));
+  if (ok) {
+    flashLed(led2, 100, 1);
+  } else {
+    flashLed(led2, 300, 2);
   }
-  else
-  {
-    turnOnLed(led1);
-    flashLed(led2, 100, 2, 50);
-    turnOffLed(led1);
-    delay(500);
-  }
+  delay(500);
 }
 
 void loop() {
-  if(diagnosticMode)
-  {
-    flashLed(led1, 60, counter);
-    //turnOnLed(led1);
+  if (radio.failureDetected) {
+    while (1 == 1) {
+      flashLed(led1, 100, 5);
+    }
   }
-  if (counter == intervalCounter)  //How often to wake up - intervals of 8 seconds
-  {
-  flashLed(led1, 1);
 
-    //digitalWrite(led, HIGH);
-    //analogReference(INTERNAL);
-    digitalWrite(tempPin, HIGH);
-    LowPower.powerDown(SLEEP_2S, ADC_OFF, BOD_OFF);
-    
-    bool tempSensorCheck;
-    tempSensorCheck = sensors.requestTemperaturesByAddress(Probe01);
-    LowPower.powerDown(SLEEP_2S, ADC_OFF, BOD_OFF);   //Sleep while waiting for conversion
-    //delay(2000);
-    float temp = sensors.getTempC(Probe01);
-    digitalWrite(tempPin, LOW);
-    //Serial.println(temp);
-    //delay(100);
-    if (diagnosticMode)
-    {
-       flashLed(led1, 5, 10);
-       delay(500);
-    }
-    if ((temp > 80) || (temp < (0 - 100)) || (tempSensorCheck == false)) //Check if values are correct and sensor is connected
-    {
-      //error
-      if (diagnosticMode)
-        {
-          flashLed(led2, 1000, 3);
-          delay(500);
-        }
-        else
-        {
-          flashLed(led2, 10, 2);
-        }
-    }
-    else
-    {
-      if (temp == lastTemp)
-        tempCounter++;
-        if (diagnosticMode)
-        {
-           flashLed(led2, 100, 2);
+  if (diagnosticMode) {
+    flashLed(led1, 60, counter);
+  }
+
+  //How often to wake up - intervals of 8 seconds
+  if (counter >= intervalCounter) {
+    flashLed(led1, 1);
+
+    float temp = getTemp();
+
+    /*|| (tempSensorCheck == false)*/ //Check if values are correct and sensor is connected
+    if ((temp > 79) || (temp < (0 - 100)))  {
+      flashLed(led2, 300, 2);
+      delay(500);
+    } else {
+      if (temp == lastTemp) {
+        tempChange = false;
+        if (diagnosticMode) {
+          flashLed(led2, 100, 1);
           delay(200);
-         flashLed(led2, 200, 2); 
-         delay(500);
         }
-      if ((tempCounter > 5) || (temp > lastTemp) || temp < lastTemp)
-      {
+        if (tempCounter > tempInterval) {
+          tempChange = true;
+        } else {
+          tempCounter++;
+        }
+      } else {
+        tempChange = true;
+      }
+
+      if (tempChange) {
         lastTemp = temp;
 
-        if ((temp < 80) && (temp > (0 - 100)))
-        {
-//          int batt = 0;
-//          int battCount = 0;
-//          for (int i = 1; i < 5; i++)
-//          {
-//            batt += analogRead(battery);
-//            battCount++;
-//          }
-//          int battInt = batt / battCount;
-          if (diagnosticMode)
-          {
-             flashLed(led2, 100, 2);
-            delay(500);
-           flashLed(led2, 200); 
-           delay(500);
-          }
-          long batt=readVcc();
-          //Serial.println(batt);
-          int battInt=(int)batt;
-          digitalWrite(radioPin, HIGH);
-          radio.powerUp();
-          network.begin(/*channel*/ 90, /*node address*/ this_node);
-          network.update();
-//          payload_t payload = {
-//            temp, battInt, device
-//          };
-
-          payload_t payload = {
-            temp, battInt, device
-          };
-
-          RF24NetworkHeader header(/*to node*/ other_node);
-          bool ok = network.write(header, &payload, sizeof(payload));
-          if (diagnosticMode)
-          {
-            flashLed(led2, 100, 3);
-            delay(200);
-            if (ok)
-            {  
-               flashLed(led2, 200);  
-        delay(500);       
-            }    
-          }
-          radio.powerDown();
-          digitalWrite(radioPin, LOW);
+        long batt = readVcc();
+        int battInt = (int)batt;
+        if (diagnosticMode) {
+          flashLed(led1, 100, 3);
         }
+        digitalWrite(radioPin, HIGH);
+        delay(100);
+        radio.begin();
+        radio.setChannel(90);
+        radio.setDataRate(RF24_250KBPS);
+        radio.setAutoAck(true);
+        network.begin(this_node);
+        network.update();
+
+        payload_t payload = {
+          temp, battInt, device
+        };
+
+        RF24NetworkHeader header(/*to node*/ other_node);
+        bool ok = network.write(header, &payload, sizeof(payload));
+        if (ok) {
+          if (diagnosticMode) {
+            flashLed(led2, 100, 1);
+            delay(200);
+          }
+        } else {
+          flashLed(led2, 300, 3);
+          delay(500);
+        }
+        digitalWrite(radioPin, LOW);
+
         tempCounter = 1;
       }
       counter = 1;
-      
     }
-    //digitalWrite(led, LOW);
-  }
-  else
-  {
+  } else {
     counter++;
   }
-
-
   LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
 }
 
-bool startupModeCheck()
-{
-  bool mode=false;
-  pinMode(led1, OUTPUT);
-  pinMode(led2, OUTPUT);
-  
-  pinMode(buttonPin, INPUT_PULLUP);
-  int buttonState=0;
-  
-  turnOnLed(led1);
-  
-  for (int x=0; x<9; x++)
-  {
-    buttonState=digitalRead(buttonPin);
-    if (buttonState==HIGH)
-    {
-      turnOffLed(led2);
-      mode=false;
-    }
-    if (buttonState==LOW)
-    {
-      turnOnLed(led2);
-      delay(500);
-      mode=true;
-      turnOffLed(led2);
-      Serial.begin(9600);
-
-    return mode;
-    }
+float getTemp() {
+  if (diagnosticMode) {
+    flashLed(led1, 100, 1);
     delay(500);
   }
-  
-  if (mode==true)
-  {
-    
+  digitalWrite(tempPin, HIGH);
+  LowPower.powerDown(SLEEP_2S, ADC_OFF, BOD_OFF);
+  float temp = 0;
+  bool tempSensorCheck;
+  tempSensorCheck = sensors.requestTemperaturesByAddress(Probe01);
+  if (tempSensorCheck) {
+    LowPower.powerDown(SLEEP_2S, ADC_OFF, BOD_OFF);   //Sleep while waiting for conversion
+
+    temp = sensors.getTempC(Probe01);
+    digitalWrite(tempPin, LOW);
+  } else {
+    temp = 90.0;
   }
-  else if (mode==false)
-  {
-    turnOffLed(led1);
-    turnOffLed(led2);
-    //pinMode(buttonPin, INPUT); 
-    return mode;
-  }
+  return temp;
 }
 
-void turnOnLed(int led)
-{
+void startupModeCheck() {
+  turnOnLed(led1);
+  int buttonState = 0;
+
+  for (int x = 0; x < 50; x++) {
+    buttonState = digitalRead(buttonPin);
+    if (buttonState == LOW) {
+      counter = 1;
+      intervalCounter = 4;
+      turnOnLed(led2);
+      delay(500);
+      diagnosticMode = true;
+      turnOffLed(led1);
+      turnOffLed(led2);
+      return;
+    }
+    delay(100);
+  }
+  turnOffLed(led1);
+  turnOffLed(led2);
+}
+
+void turnOnLed(int led) {
   digitalWrite(led, HIGH);
 }
 
-void turnOffLed(int led)
-{
+void turnOffLed(int led) {
   digitalWrite(led, LOW);
 }
 
-void flashLed(int led, int time)
-{
+void flashLed(int led, int time) {
   turnOffLed(led);
   delay(50);
   turnOnLed(led);
@@ -326,23 +284,19 @@ void flashLed(int led, int time)
   turnOffLed(led);
 }
 
-void flashLed(int led, int time, int count)
-{
+void flashLed(int led, int time, int count) {
   turnOffLed(led);
   delay(50);
-  for (int x=0; x < count; x++)
-  {
+  for (int x = 0; x < count; x++) {
     flashLed(led, time);
     delay(75);
   }
 }
 
-void flashLed(int led, int time, int count, int delayBetweenFlashes)
-{
+void flashLed(int led, int time, int count, int delayBetweenFlashes) {
   turnOffLed(led);
   delay(50);
-   for (int x=0; x < count; x++)
-  {
+  for (int x = 0; x < count; x++) {
     flashLed(led, time);
     delay(delayBetweenFlashes);
   }
@@ -351,25 +305,25 @@ void flashLed(int led, int time, int count, int delayBetweenFlashes)
 long readVcc() {
   // Read 1.1V reference against AVcc
   // set the reference to Vcc and the measurement to the internal 1.1V reference
-  #if defined(__AVR_ATmega32U4__) || defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__)
-    ADMUX = _BV(REFS0) | _BV(MUX4) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);
-  #elif defined (__AVR_ATtiny24__) || defined(__AVR_ATtiny44__) || defined(__AVR_ATtiny84__)
-    ADMUX = _BV(MUX5) | _BV(MUX0);
-  #elif defined (__AVR_ATtiny25__) || defined(__AVR_ATtiny45__) || defined(__AVR_ATtiny85__)
-    ADMUX = _BV(MUX3) | _BV(MUX2);
-  #else
-    ADMUX = _BV(REFS0) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);
-  #endif  
- 
+#if defined(__AVR_ATmega32U4__) || defined(__AVR_ATmega1280__) || defined(__AVR_ATmega2560__)
+  ADMUX = _BV(REFS0) | _BV(MUX4) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);
+#elif defined (__AVR_ATtiny24__) || defined(__AVR_ATtiny44__) || defined(__AVR_ATtiny84__)
+  ADMUX = _BV(MUX5) | _BV(MUX0);
+#elif defined (__AVR_ATtiny25__) || defined(__AVR_ATtiny45__) || defined(__AVR_ATtiny85__)
+  ADMUX = _BV(MUX3) | _BV(MUX2);
+#else
+  ADMUX = _BV(REFS0) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);
+#endif
+
   delay(2); // Wait for Vref to settle
   ADCSRA |= _BV(ADSC); // Start conversion
-  while (bit_is_set(ADCSRA,ADSC)); // measuring
- 
-  uint8_t low  = ADCL; // must read ADCL first - it then locks ADCH  
+  while (bit_is_set(ADCSRA, ADSC)); // measuring
+
+  uint8_t low  = ADCL; // must read ADCL first - it then locks ADCH
   uint8_t high = ADCH; // unlocks both
- 
-  long result = (high<<8) | low;
- 
+
+  long result = (high << 8) | low;
+
   result = 1087549L / result; // Calculate Vcc (in mV); 1125300 = 1.1*1023*1000
   return result; // Vcc in millivolts
 }
